@@ -1,0 +1,732 @@
+From fd54e06bb9ac519fc562f3d309a6befd47f9abf6 Mon Sep 17 00:00:00 2001
+From: Jeremy Soller <jeremy@system76.com>
+Date: Tue, 11 Jun 2019 15:25:26 -0600
+Subject: [PATCH] Use connector_type from mutter to fix detection of builtin
+ display on NVIDIA
+
+---
+ libgnome-desktop/gnome-rr-config.c      |  6 +++---
+ libgnome-desktop/gnome-rr-output-info.c |  2 ++
+ libgnome-desktop/gnome-rr-private.h     |  4 +++-
+ libgnome-desktop/gnome-rr.c             | 28 ++++++++++++++++++++++++-
+ 4 files changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/libgnome-desktop/gnome-rr-config.c b/libgnome-desktop/gnome-rr-config.c
+index 707df697..396f1f4d 100644
+--- a/libgnome-desktop/gnome-rr-config.c
++++ b/libgnome-desktop/gnome-rr-config.c
+@@ -136,60 +136,61 @@ gnome_rr_config_finalize (GObject *gobject)
+     G_OBJECT_CLASS (gnome_rr_config_parent_class)->finalize (gobject);
+ }
+ 
+ gboolean
+ gnome_rr_config_load_current (GnomeRRConfig *config, GError **error)
+ {
+     GPtrArray *a;
+     GnomeRROutput **rr_outputs;
+     int i;
+     int clone_width = -1;
+     int clone_height = -1;
+     int last_x;
+ 
+     g_return_val_if_fail (GNOME_IS_RR_CONFIG (config), FALSE);
+ 
+     a = g_ptr_array_new ();
+     rr_outputs = gnome_rr_screen_list_outputs (config->priv->screen);
+ 
+     config->priv->clone = FALSE;
+     
+     for (i = 0; rr_outputs[i] != NULL; ++i)
+     {
+ 	GnomeRROutput *rr_output = rr_outputs[i];
+ 	GnomeRROutputInfo *output = g_object_new (GNOME_TYPE_RR_OUTPUT_INFO, NULL);
+ 	GnomeRRMode *mode = NULL;
+ 	GnomeRRCrtc *crtc;
+ 
+ 	output->priv->name = g_strdup (gnome_rr_output_get_name (rr_output));
+ 	output->priv->connected = TRUE;
+ 	output->priv->display_name = g_strdup (gnome_rr_output_get_display_name (rr_output));
++	output->priv->connector_type = g_strdup (_gnome_rr_output_get_connector_type (rr_output));
+ 	output->priv->config = config;
+ 	output->priv->is_tiled = _gnome_rr_output_get_tile_info (rr_output,
+ 								 &output->priv->tile);
+ 	if (output->priv->is_tiled)
+ 	{
+ 	    _gnome_rr_output_get_tiled_display_size (rr_output, NULL, NULL,
+ 						     &output->priv->total_tiled_width,
+ 						     &output->priv->total_tiled_height);
+ 	}
+ 
+ 	if (!output->priv->connected)
+ 	{
+ 	    output->priv->x = -1;
+ 	    output->priv->y = -1;
+ 	    output->priv->width = -1;
+ 	    output->priv->height = -1;
+ 	    output->priv->rate = -1;
+ 	}
+ 	else
+ 	{
+ 	    gnome_rr_output_get_ids_from_edid (rr_output,
+ 					       &output->priv->vendor,
+ 					       &output->priv->product,
+ 					       &output->priv->serial);
+ 		
+ 	    crtc = gnome_rr_output_get_crtc (rr_output);
+ 	    mode = crtc ? gnome_rr_crtc_get_current_mode (crtc) : NULL;
+ 
+ 	    if (crtc && mode)
+ 	    {
+@@ -411,60 +412,61 @@ gnome_rr_config_equal (GnomeRRConfig  *c1,
+ 	GnomeRROutputInfo *output1 = c1->priv->outputs[i];
+ 	GnomeRROutputInfo *output2;
+ 
+ 	output2 = find_output (c2, output1->priv->name);
+ 	if (!output2 || !output_equal (output1, output2))
+ 	    return FALSE;
+     }
+     
+     return TRUE;
+ }
+ 
+ static GnomeRROutputInfo **
+ make_outputs (GnomeRRConfig *config)
+ {
+     GPtrArray *outputs;
+     GnomeRROutputInfo *first_on;
+     int i;
+ 
+     outputs = g_ptr_array_new ();
+ 
+     first_on = NULL;
+     
+     for (i = 0; config->priv->outputs[i] != NULL; ++i)
+     {
+ 	GnomeRROutputInfo *old = config->priv->outputs[i];
+ 	GnomeRROutputInfo *new = g_object_new (GNOME_TYPE_RR_OUTPUT_INFO, NULL);
+ 	*(new->priv) = *(old->priv);
+ 
+         new->priv->name = g_strdup (old->priv->name);
+         new->priv->display_name = g_strdup (old->priv->display_name);
++        new->priv->connector_type = g_strdup (old->priv->connector_type);
+         new->priv->vendor = g_strdup (old->priv->vendor);
+         new->priv->product = g_strdup (old->priv->product);
+         new->priv->serial = g_strdup (old->priv->serial);
+ 
+ 	if (old->priv->on && !first_on)
+ 	    first_on = old;
+ 	
+ 	if (config->priv->clone && new->priv->on)
+ 	{
+ 	    g_assert (first_on);
+ 
+ 	    new->priv->width = first_on->priv->width;
+ 	    new->priv->height = first_on->priv->height;
+ 	    new->priv->rotation = first_on->priv->rotation;
+ 	    new->priv->x = 0;
+ 	    new->priv->y = 0;
+ 	}
+ 
+ 	g_ptr_array_add (outputs, new);
+     }
+ 
+     g_ptr_array_add (outputs, NULL);
+ 
+     return (GnomeRROutputInfo **)g_ptr_array_free (outputs, FALSE);
+ }
+ 
+ gboolean
+ gnome_rr_config_applicable (GnomeRRConfig  *configuration,
+ 			    GnomeRRScreen  *screen,
+ 			    GError        **error)
+@@ -565,63 +567,61 @@ gnome_rr_config_ensure_primary (GnomeRRConfig *configuration)
+ 	g_return_val_if_fail (GNOME_IS_RR_CONFIG (configuration), FALSE);
+ 
+         builtin_display = NULL;
+         top_left = NULL;
+         found = FALSE;
+ 	priv = configuration->priv;
+ 
+         for (i = 0; priv->outputs[i] != NULL; ++i) {
+                 GnomeRROutputInfo *info = priv->outputs[i];
+ 
+                 if (!info->priv->on) {
+                        info->priv->primary = FALSE;
+                        continue;
+                 }
+ 
+                 /* ensure only one */
+                 if (info->priv->primary) {
+                         if (found) {
+                                 info->priv->primary = FALSE;
+                         } else {
+                                 found = TRUE;
+                         }
+                 }
+ 
+                 if (top_left == NULL
+                     || (info->priv->x < top_left->priv->x
+                         && info->priv->y < top_left->priv->y)) {
+                         top_left = info;
+                 }
+                 if (builtin_display == NULL
+-                    && _gnome_rr_output_name_is_builtin_display (info->priv->name)) {
+-                        /* shame we can't find the connector type
+-                           as with gnome_rr_output_is_builtin_display */
++                    && _gnome_rr_output_connector_type_is_builtin_display (info->priv->connector_type)) {
+                         builtin_display = info;
+                 }
+         }
+ 
+         if (!found) {
+                 if (builtin_display != NULL) {
+                         builtin_display->priv->primary = TRUE;
+                 } else if (top_left != NULL) {
+                         /* Note: top_left can be NULL if all outputs are off */
+                         top_left->priv->primary = TRUE;
+                 }
+         }
+ 
+         return !found;
+ }
+ 
+ static gboolean
+ gnome_rr_config_apply_helper (GnomeRRConfig *config,
+ 			      GnomeRRScreen *screen,
+ 			      gboolean       persistent,
+ 			      GError       **error)
+ {
+     CrtcAssignment *assignment;
+     GnomeRROutputInfo **outputs;
+     gboolean result = FALSE;
+     int i;
+ 
+     g_return_val_if_fail (GNOME_IS_RR_CONFIG (config), FALSE);
+     g_return_val_if_fail (GNOME_IS_RR_SCREEN (screen), FALSE);
+ 
+diff --git a/libgnome-desktop/gnome-rr-output-info.c b/libgnome-desktop/gnome-rr-output-info.c
+index 7f97ecc1..08e9b45e 100644
+--- a/libgnome-desktop/gnome-rr-output-info.c
++++ b/libgnome-desktop/gnome-rr-output-info.c
+@@ -13,69 +13,71 @@
+  * The Gnome Library is distributed in the hope that it will be useful,
+  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+  * Library General Public License for more details.
+  *
+  * You should have received a copy of the GNU Library General Public
+  * License along with the Gnome Desktop Library; see the file COPYING.LIB.  If not,
+  * write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+  * Boston, MA 02110-1301, USA.
+  */
+ 
+ #define GNOME_DESKTOP_USE_UNSTABLE_API
+ 
+ #include <config.h>
+ 
+ #include "gnome-rr-config.h"
+ 
+ #include "gnome-rr-private.h"
+ 
+ G_DEFINE_TYPE (GnomeRROutputInfo, gnome_rr_output_info, G_TYPE_OBJECT)
+ 
+ static void
+ gnome_rr_output_info_init (GnomeRROutputInfo *self)
+ {
+     self->priv = G_TYPE_INSTANCE_GET_PRIVATE (self, GNOME_TYPE_RR_OUTPUT_INFO, GnomeRROutputInfoPrivate);
+ 
+     self->priv->name = NULL;
+     self->priv->on = FALSE;
+     self->priv->rotation = GNOME_RR_ROTATION_0;
+     self->priv->display_name = NULL;
++    self->priv->connector_type = NULL;
+ }
+ 
+ static void
+ gnome_rr_output_info_finalize (GObject *gobject)
+ {
+     GnomeRROutputInfo *self = GNOME_RR_OUTPUT_INFO (gobject);
+ 
+     g_free (self->priv->name);
+     g_free (self->priv->display_name);
++    g_free (self->priv->connector_type);
+     g_free (self->priv->product);
+     g_free (self->priv->serial);
+     g_free (self->priv->vendor);
+ 
+     G_OBJECT_CLASS (gnome_rr_output_info_parent_class)->finalize (gobject);
+ }
+ 
+ static void
+ gnome_rr_output_info_class_init (GnomeRROutputInfoClass *klass)
+ {
+     GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
+ 
+     g_type_class_add_private (klass, sizeof (GnomeRROutputInfoPrivate));
+ 
+     gobject_class->finalize = gnome_rr_output_info_finalize;
+ }
+ 
+ /**
+  * gnome_rr_output_info_get_name:
+  *
+  * Returns: (transfer none): the output name
+  */
+ char *gnome_rr_output_info_get_name (GnomeRROutputInfo *self)
+ {
+     g_return_val_if_fail (GNOME_IS_RR_OUTPUT_INFO (self), NULL);
+ 
+     return self->priv->name;
+ }
+ 
+ /**
+diff --git a/libgnome-desktop/gnome-rr-private.h b/libgnome-desktop/gnome-rr-private.h
+index e721e39c..5a852010 100644
+--- a/libgnome-desktop/gnome-rr-private.h
++++ b/libgnome-desktop/gnome-rr-private.h
+@@ -59,65 +59,67 @@ struct GnomeRRTile {
+   guint max_vert_tiles;
+   guint loc_horiz;
+   guint loc_vert;
+   guint width;
+   guint height;
+ };
+ 
+ typedef struct GnomeRRTile GnomeRRTile;
+ 
+ struct _GnomeRROutputInfoPrivate
+ {
+     char *		name;
+ 
+     gboolean		on;
+     int			width;
+     int			height;
+     int			rate;
+     int			x;
+     int			y;
+     GnomeRRRotation	rotation;
+     GnomeRRRotation	available_rotations;
+ 
+     gboolean		connected;
+     char *		vendor;
+     char *		product;
+     char *		serial;
+     double		aspect;
+     int			pref_width;
+     int			pref_height;
+     char *		display_name;
++    char *		connector_type;
+     gboolean            primary;
+     gboolean            underscanning;
+ 
+     gboolean            is_tiled;
+     GnomeRRTile         tile;
+ 
+     int                 total_tiled_width;
+     int                 total_tiled_height;
+     /* ptr back to info */
+     GnomeRRConfig       *config;
+ };
+ 
+ struct _GnomeRRConfigPrivate
+ {
+   gboolean clone;
+   GnomeRRScreen *screen;
+   GnomeRROutputInfo **outputs;
+ };
+ 
+ gboolean _gnome_rr_output_name_is_builtin_display (const char *name);
++gboolean _gnome_rr_output_connector_type_is_builtin_display (const char *connector_type);
+ 
+ gboolean _gnome_rr_screen_apply_configuration (GnomeRRScreen  *screen,
+ 					       gboolean        persistent,
+ 					       GVariant       *crtcs,
+ 					       GVariant       *outputs,
+ 					       GError        **error);
+ 
+-
++const char * _gnome_rr_output_get_connector_type  (GnomeRROutput         *output);
+ gboolean    _gnome_rr_output_get_tile_info      (GnomeRROutput         *output,
+ 						GnomeRRTile *tile);
+ gboolean    _gnome_rr_output_get_tiled_display_size (GnomeRROutput *output,
+ 						     int *tile_w, int *tile_h,
+ 						     int *width, int *height);
+ 
+ #endif
+diff --git a/libgnome-desktop/gnome-rr.c b/libgnome-desktop/gnome-rr.c
+index dca50694..bfbd785d 100644
+--- a/libgnome-desktop/gnome-rr.c
++++ b/libgnome-desktop/gnome-rr.c
+@@ -37,60 +37,61 @@
+ 
+ #include "gnome-rr-private.h"
+ 
+ /* From xf86drmMode.h: it's ABI so it won't change */
+ #define DRM_MODE_FLAG_INTERLACE			(1<<4)
+ 
+ enum {
+     SCREEN_PROP_0,
+     SCREEN_PROP_GDK_SCREEN,
+     SCREEN_PROP_DPMS_MODE,
+     SCREEN_PROP_LAST,
+ };
+ 
+ enum {
+     SCREEN_CHANGED,
+     SCREEN_OUTPUT_CONNECTED,
+     SCREEN_OUTPUT_DISCONNECTED,
+     SCREEN_SIGNAL_LAST,
+ };
+ 
+ gint screen_signals[SCREEN_SIGNAL_LAST];
+ 
+ struct GnomeRROutput
+ {
+     ScreenInfo *	info;
+     guint		id;
+     glong               winsys_id;
+     
+     char *		name;
+     char *		display_name;
++    char *      connector_type;
+     GnomeRRCrtc *	current_crtc;
+     GnomeRRCrtc **	possible_crtcs;
+     GnomeRROutput **	clones;
+     GnomeRRMode **	modes;
+ 
+     char *              vendor;
+     char *              product;
+     char *              serial;
+     int                 width_mm;
+     int                 height_mm;
+     GBytes *            edid;
+     char *              edid_file;
+ 
+     int                 backlight;
+     int                 min_backlight_step;
+ 
+     gboolean            is_primary;
+     gboolean            is_presentation;
+     gboolean            is_underscanning;
+     gboolean            supports_underscanning;
+ 
+     GnomeRRTile         tile_info;
+ };
+ 
+ struct GnomeRRCrtc
+ {
+     ScreenInfo *	info;
+     guint		id;
+     glong               winsys_id;
+     
+@@ -1375,153 +1376,156 @@ output_initialize (GnomeRROutput *output, GVariant *info)
+     while (g_variant_iter_loop (clones, "u", &id))
+     {
+ 	GnomeRROutput *gnome_rr_output = gnome_rr_output_by_id (output->info, id);
+ 	
+ 	if (gnome_rr_output)
+ 	    g_ptr_array_add (a, gnome_rr_output);
+     }
+     g_ptr_array_add (a, NULL);
+     output->clones = (GnomeRROutput **)g_ptr_array_free (a, FALSE);
+     g_variant_iter_free (clones);
+     
+     /* Modes */
+     a = g_ptr_array_new ();
+     while (g_variant_iter_loop (modes, "u", &id))
+     {
+ 	GnomeRRMode *mode = mode_by_id (output->info, id);
+ 	
+ 	if (mode)
+ 	    g_ptr_array_add (a, mode);
+     }
+     g_ptr_array_add (a, NULL);
+     output->modes = (GnomeRRMode **)g_ptr_array_free (a, FALSE);
+     g_variant_iter_free (modes);
+ 
+     g_variant_lookup (properties, "vendor", "s", &output->vendor);
+     g_variant_lookup (properties, "product", "s", &output->product);
+     g_variant_lookup (properties, "serial", "s", &output->serial);
+     g_variant_lookup (properties, "width-mm", "i", &output->width_mm);
+     g_variant_lookup (properties, "height-mm", "i", &output->height_mm);
+     g_variant_lookup (properties, "display-name", "s", &output->display_name);
++    g_variant_lookup (properties, "connector-type", "s", &output->connector_type);
+     g_variant_lookup (properties, "backlight", "i", &output->backlight);
+     g_variant_lookup (properties, "min-backlight-step", "i", &output->min_backlight_step);
+     g_variant_lookup (properties, "primary", "b", &output->is_primary);
+     g_variant_lookup (properties, "presentation", "b", &output->is_presentation);
+     g_variant_lookup (properties, "underscanning", "b", &output->is_underscanning);
+     g_variant_lookup (properties, "supports-underscanning", "b", &output->supports_underscanning);
+ 
+     if ((edid = g_variant_lookup_value (properties, "edid", G_VARIANT_TYPE ("ay"))))
+       {
+ 	output->edid = g_variant_get_data_as_bytes (edid);
+ 	g_variant_unref (edid);
+       }
+     else
+       g_variant_lookup (properties, "edid-file", "s", &output->edid_file);
+ 
+     if ((tile = g_variant_lookup_value (properties, "tile", G_VARIANT_TYPE ("(uuuuuuuu)"))))
+       {
+ 	g_variant_get (tile, "(uuuuuuuu)",
+ 		       &output->tile_info.group_id, &output->tile_info.flags,
+ 		       &output->tile_info.max_horiz_tiles, &output->tile_info.max_vert_tiles,
+ 		       &output->tile_info.loc_horiz, &output->tile_info.loc_vert,
+ 		       &output->tile_info.width, &output->tile_info.height);
+ 	g_variant_unref (tile);
+       }
+     else
+       memset(&output->tile_info, 0, sizeof(output->tile_info));
+ 
+     if (output->is_primary)
+ 	output->info->primary = output;
+ 
+     g_variant_unref (properties);
+ }
+ 
+ static GnomeRROutput*
+ output_copy (const GnomeRROutput *from)
+ {
+     GPtrArray *array;
+     GnomeRRCrtc **p_crtc;
+     GnomeRROutput **p_output;
+     GnomeRRMode **p_mode;
+     GnomeRROutput *output = g_slice_new0 (GnomeRROutput);
+ 
+     output->id = from->id;
+     output->info = from->info;
+     output->name = g_strdup (from->name);
+     output->display_name = g_strdup (from->display_name);
++    output->connector_type = g_strdup (from->connector_type);
+     output->vendor = g_strdup (from->vendor);
+     output->product = g_strdup (from->product);
+     output->serial = g_strdup (from->serial);
+     output->current_crtc = from->current_crtc;
+     output->backlight = from->backlight;
+     if (from->edid)
+       output->edid = g_bytes_ref (from->edid);
+     output->edid_file = g_strdup (from->edid_file);
+ 
+     output->is_primary = from->is_primary;
+     output->is_presentation = from->is_presentation;
+ 
+     array = g_ptr_array_new ();
+     for (p_crtc = from->possible_crtcs; *p_crtc != NULL; p_crtc++)
+     {
+         g_ptr_array_add (array, *p_crtc);
+     }
+     output->possible_crtcs = (GnomeRRCrtc**) g_ptr_array_free (array, FALSE);
+ 
+     array = g_ptr_array_new ();
+     for (p_output = from->clones; *p_output != NULL; p_output++)
+     {
+         g_ptr_array_add (array, *p_output);
+     }
+     output->clones = (GnomeRROutput**) g_ptr_array_free (array, FALSE);
+ 
+     array = g_ptr_array_new ();
+     for (p_mode = from->modes; *p_mode != NULL; p_mode++)
+     {
+         g_ptr_array_add (array, *p_mode);
+     }
+     output->modes = (GnomeRRMode**) g_ptr_array_free (array, FALSE);
+ 
+     return output;
+ }
+ 
+ static void
+ output_free (GnomeRROutput *output)
+ {
+     g_free (output->clones);
+     g_free (output->modes);
+     g_free (output->possible_crtcs);
+     g_free (output->name);
+     g_free (output->vendor);
+     g_free (output->product);
+     g_free (output->serial);
+     g_free (output->display_name);
++    g_free (output->connector_type);
+     g_free (output->edid_file);
+     if (output->edid)
+       g_bytes_unref (output->edid);
+     g_slice_free (GnomeRROutput, output);
+ }
+ 
+ guint32
+ gnome_rr_output_get_id (GnomeRROutput *output)
+ {
+     g_assert(output != NULL);
+     
+     return output->id;
+ }
+ 
+ const guint8 *
+ gnome_rr_output_get_edid_data (GnomeRROutput *output,
+ 			       gsize         *size)
+ {
+   if (output->edid)
+     return g_bytes_get_data (output->edid, size);
+ 
+   if (output->edid_file)
+     {
+       GMappedFile *mmap;
+ 
+       mmap = g_mapped_file_new (output->edid_file, FALSE, NULL);
+ 
+       if (mmap)
+ 	{
+ 	  output->edid = g_mapped_file_get_bytes (mmap);
+@@ -1667,66 +1671,80 @@ gnome_rr_output_get_crtc (GnomeRROutput *output)
+ /**
+  * gnome_rr_output_get_possible_crtcs:
+  * @output: a #GnomeRROutput
+  * Returns: (array zero-terminated=1) (transfer none):
+  */
+ GnomeRRCrtc **
+ gnome_rr_output_get_possible_crtcs (GnomeRROutput *output)
+ {
+     g_return_val_if_fail (output != NULL, NULL);
+ 
+     return output->possible_crtcs;
+ }
+ 
+ gboolean
+ _gnome_rr_output_name_is_builtin_display (const char *name)
+ {
+     if (!name)
+         return FALSE;
+ 
+     if (strstr (name, "lvds") ||  /* Most drivers use an "LVDS" prefix... */
+ 	strstr (name, "LVDS") ||
+ 	strstr (name, "Lvds") ||
+ 	strstr (name, "LCD")  ||  /* ... but fglrx uses "LCD" in some versions.  Shoot me now, kthxbye. */
+ 	strstr (name, "eDP")  ||    /* eDP is for internal built-in panel connections */
+ 	strstr (name, "DSI"))
+         return TRUE;
+ 
+     return FALSE;
+ }
+ 
++gboolean
++_gnome_rr_output_connector_type_is_builtin_display (const char *connector_type)
++{
++    if (!connector_type)
++        return FALSE;
++
++    if (strcmp (connector_type, "LVDS") == 0 ||
++	strcmp (connector_type, "eDP") == 0  ||
++	strcmp (connector_type, "DSI") == 0)
++        return TRUE;
++
++    return FALSE;
++}
++
+ gboolean
+ gnome_rr_output_is_builtin_display (GnomeRROutput *output)
+ {
+     g_return_val_if_fail (output != NULL, FALSE);
+ 
+-    return _gnome_rr_output_name_is_builtin_display (output->name);
++    return _gnome_rr_output_connector_type_is_builtin_display (output->connector_type);
+ }
+ 
+ /**
+  * gnome_rr_output_get_current_mode:
+  * @output: a #GnomeRROutput
+  * Returns: (transfer none): the current mode of this output
+  */
+ GnomeRRMode *
+ gnome_rr_output_get_current_mode (GnomeRROutput *output)
+ {
+     GnomeRRCrtc *crtc;
+     GnomeRRMode *mode;
+     g_return_val_if_fail (output != NULL, NULL);
+     
+     if ((crtc = gnome_rr_output_get_crtc (output)))
+     {
+ 	int total_w, total_h, tile_w, tile_h;
+ 	mode = gnome_rr_crtc_get_current_mode (crtc);
+ 
+ 	if (_gnome_rr_output_get_tiled_display_size (output, &tile_w, &tile_h, &total_w, &total_h))
+ 	{
+ 	    if (mode->width == tile_w &&
+ 		mode->height == tile_h) {
+ 		if (output->modes[0]->tiled)
+ 		    return output->modes[0];
+ 	    }
+ 	}
+ 	return gnome_rr_crtc_get_current_mode (crtc);
+     }
+     return NULL;
+@@ -2217,60 +2235,68 @@ gnome_rr_crtc_get_gamma (GnomeRRCrtc     *crtc,
+   if (red)
+     *red = g_bytes_unref_to_data (red_bytes, &dummy);
+   else
+     g_bytes_unref (red_bytes);
+   if (green)
+     *green = g_bytes_unref_to_data (green_bytes, &dummy);
+   else
+     g_bytes_unref (green_bytes);
+   if (blue)
+     *blue = g_bytes_unref_to_data (blue_bytes, &dummy);
+   else
+     g_bytes_unref (blue_bytes);
+ 
+   return TRUE;
+ }
+ 
+ gboolean
+ gnome_rr_output_get_is_underscanning (GnomeRROutput *output)
+ {
+     g_assert(output != NULL);
+     return output->is_underscanning;
+ }
+ 
+ gboolean
+ gnome_rr_output_supports_underscanning (GnomeRROutput *output)
+ {
+     g_assert (output != NULL);
+     return output->supports_underscanning;
+ }
+ 
++const char *
++_gnome_rr_output_get_connector_type (GnomeRROutput *output)
++{
++    g_return_val_if_fail (output != NULL, NULL);
++
++    return output->connector_type;
++}
++
+ gboolean
+ _gnome_rr_output_get_tile_info (GnomeRROutput *output,
+ 				GnomeRRTile *tile)
+ {
+     if (output->tile_info.group_id == UNDEFINED_GROUP_ID)
+         return FALSE;
+ 
+     if (!tile)
+         return FALSE;
+ 
+     *tile = output->tile_info;
+     return TRUE;
+ }
+ 
+ GType
+ gnome_rr_dpms_mode_get_type (void)
+ {
+   static GType etype = 0;
+   if (etype == 0) {
+     static const GEnumValue values[] = {
+       { GNOME_RR_DPMS_ON, "GNOME_RR_DPMS_ON", "on" },
+       { GNOME_RR_DPMS_STANDBY, "GNOME_RR_DPMS_STANDBY", "standby" },
+       { GNOME_RR_DPMS_SUSPEND, "GNOME_RR_DPMS_SUSPEND", "suspend" },
+       { GNOME_RR_DPMS_OFF, "GNOME_RR_DPMS_OFF", "off" },
+       { GNOME_RR_DPMS_UNKNOWN, "GNOME_RR_DPMS_UNKNOWN", "unknown" },
+       { 0, NULL, NULL }
+     };
+     etype = g_enum_register_static ("GnomeRRDpmsModeType", values);
+   }
+   return etype;
+-- 
+2.39.2
+
