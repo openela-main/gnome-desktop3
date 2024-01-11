@@ -7,7 +7,7 @@
 
 Name: gnome-desktop3
 Version: 3.32.2
-Release: 1%{?dist}.2
+Release: 3%{?dist}
 Summary: Shared code among gnome-panel, gnome-session, nautilus, etc
 
 License: GPLv2+ and LGPLv2+
@@ -107,13 +107,13 @@ the functionality of the installed %{name} package.
 %{_datadir}/installed-tests
 
 %changelog
-* Tue Apr 18 2023 Ray Strode <rstrode@redhat.com> - 3.32.2-1.2
+* Tue Apr 18 2023 Ray Strode <rstrode@redhat.com> - 3.32.2-3
 - Add back dropped function from previous commit to maintain ABI
-  Related: #2182622
+  Related: #2076472
 
-* Thu Mar 16 2023 Jonas Ådahl <jadahl@redhat.com> - 3.32.2-1.1
+* Thu Mar 16 2023 Jonas Ådahl <jadahl@redhat.com> - 3.32.2-2
 - Backport GnomeRR fix for detecting built in panels
-  Resolves: #2182622
+  Resolves: #2076472
 
 * Fri Jun 14 2019 Florian Müllner <fmuellner@redhat.com> - 3.32.2-1
 - Rebase to 3.32.2
